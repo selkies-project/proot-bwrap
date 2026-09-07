@@ -245,19 +245,31 @@ def collect_garbage(base):
 
 
 def proot_candidates():
-    """proot executables to try, best first."""
+    """proot executables to try, best first, each named once.
+
+    The build beside this program comes first: the installer puts one there
+    that names the program in AT_EXECFN, and an image that also carries a
+    proot-apps runner has that runner's copy earlier on PATH, which does not.
+    Every PATH entry is offered rather than the first, since the one that
+    answers is worth more than the one that comes first.
+    """
     override = os.environ.get("PROOT_BWRAP_PROOT")
     if override:
         yield override
         return
+    here = os.path.dirname(os.path.realpath(__file__))
     home = os.path.expanduser("~")
-    for path in (os.path.join(home, ".local", "bin", "proot"),
-                 "/opt/proot-apps-cap/proot", "/opt/proot-apps/proot"):
-        if os.access(path, os.X_OK):
-            yield path
-    found = shutil.which("proot")
-    if found:
-        yield found
+    paths = [os.path.join(here, "proot"), os.path.join(home, ".local", "bin", "proot")]
+    paths.extend(os.path.join(directory, "proot")
+                 for directory in (os.environ.get("PATH") or os.defpath).split(":") if directory)
+    paths.extend(("/opt/proot-apps-cap/proot", "/opt/proot-apps/proot"))
+    seen = set()
+    for path in paths:
+        real = os.path.realpath(path)
+        if real in seen or not os.access(path, os.X_OK):
+            continue
+        seen.add(real)
+        yield path
 
 
 # Reads AT_EXECFN the way a program does: through prctl(PR_GET_AUXV), and
