@@ -56,8 +56,9 @@ falls back to this one.
   named in `AT_EXECFN`, and the multi-call coreutils of Ubuntu 25.10 and later
   reads that to decide which tool it is, so `cp`, `ls` and `dirname` fail with
   `coreutils: unknown program`. The installer builds one that answers with the
-  program's own name; `proot-bwrap` prefers such a build, and says which it
-  picked under `PROOT_BWRAP_DEBUG=1`.
+  program's own name; `proot-bwrap` prefers such a build wherever it sits, its
+  own prefix first, and says which it picked under `PROOT_BWRAP_DEBUG=1`. An
+  image with a proot-apps runner has that runner's proot earlier on `PATH`.
 - **The browser helper is the one thing PRoot cannot run.** Both runtimes, both architectures,
   games and Proton run under either backend, but the client gives its browser
   helper about ten seconds to start and under proot it never gets there. One
@@ -71,6 +72,18 @@ falls back to this one.
   seconds. Games never hit this, so the backend is chosen per container: the
   helper runs under fakechroot and everything else under PRoot. Set
   `PROOT_BWRAP_BACKEND=fakechroot` to put the whole launch on fakechroot.
+- **The container gets the graphics stack the host has, and no more.**
+  pressure-vessel copies the host's driver libraries into every container, so
+  what is missing outside is missing inside. A host without 32-bit driver
+  libraries leaves native 32-bit games on llvmpipe -- the CPU -- while 64-bit
+  Proton keeps the GPU, which reads as "native games are broken, Proton works".
+  On NVIDIA that is the container runtime's doing: a CDI specification carries
+  no 32-bit libraries today
+  ([nvidia-container-toolkit#2035](https://github.com/NVIDIA/nvidia-container-toolkit/pull/2035)),
+  so `/usr/lib/i386-linux-gnu/libGLX_nvidia.so.0` inside the container is the
+  first thing to look for. `tests/steam-shim-check.sh` compares the container's
+  renderer with the host's for each architecture, which tells that apart from a
+  fault of the stand-in.
 - **This is not a security boundary.** It confines paths, not privileges; the
   surrounding container is the boundary, as it already is for the browsers
   those images run with `--no-sandbox`.
@@ -80,8 +93,9 @@ falls back to this one.
 
 `tests/steam-shim-check.sh` exercises the stand-in the way Steam does: the
 soldier, sniper and scout-on-soldier containers, OpenGL and Vulkan for both
-architectures, an X11 client, a native benchmark, a Windows OpenGL program
-through GE-Proton, and the client's sign-in window.
+architectures against what the host itself renders with, an X11 client, a
+native benchmark, a Windows OpenGL program through GE-Proton, and the client's
+sign-in window.
 
 ```bash
 tests/steam-shim-check.sh --home ~/steamtest --display :96 \

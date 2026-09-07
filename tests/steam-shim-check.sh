@@ -34,7 +34,11 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$home" ] || { echo "--home is required" >&2; exit 2; }
 export HOME="$home" DISPLAY="$display"
-export BWRAP="${BWRAP:-$(dirname "$(readlink -f "$0")")/proot-bwrap}"
+# The stand-in beside this script, or the one in the directory above it,
+# which is where the repository keeps it.
+here="$(dirname "$(readlink -f "$0")")"
+[ -x "$here/proot-bwrap" ] || here="$(dirname "$here")"
+export BWRAP="${BWRAP:-$here/proot-bwrap}"
 [ -z "$force" ] || export PRESSURE_VESSEL_BWRAP="$BWRAP"
 [ -z "$backend" ] || export PROOT_BWRAP_BACKEND="$backend"
 common="$HOME/Steam/steamapps/common"
@@ -42,6 +46,7 @@ soldier="$common/SteamLinuxRuntime_soldier/run"
 sniper="$common/SteamLinuxRuntime_sniper/run"
 scout="$common/SteamLinuxRuntime/run-in-scout-on-soldier"
 helpers=/usr/lib/pressure-vessel/from-host/libexec/steam-runtime-tools-0
+host_helpers="$common/SteamLinuxRuntime_sniper/pressure-vessel/libexec/steam-runtime-tools-0"
 pass=0
 fail=0
 skip=0
@@ -91,16 +96,70 @@ out="$(in_runtime "$sniper" "readlink -f $helpers/pv-locale-gen; readlink -f /us
 case "$out" in *pv-locale-gen*python3.9*container=pressure-vessel*1) report 0 paths "readlink -f, generated /etc/passwd" ;; *) report 1 paths "$out" ;; esac
 
 echo "== graphics"
+# A renderer string on its own proves nothing: llvmpipe answers too, and a
+# container that has quietly fallen back to it is exactly what a native game
+# reports as running on the CPU. So every check here is against what the same
+# helper says outside the container, per architecture. A host that is itself
+# software cannot show more than that the container matches it, and a host
+# whose 32-bit graphics stack is missing -- an NVIDIA container runtime
+# installs none today -- says so rather than counting against the stand-in.
+renderer() {  # renderer HELPERS ARCH
+    "$1/$2-linux-gnu-wflinfo" --platform glx --api gl 2>/dev/null |
+        sed -n 's/^OpenGL renderer string: //p' | tail -1
+}
+
+vulkan_gpus() {  # vulkan_gpus HELPERS ARCH: the non-software devices, one per line
+    "$1/$2-linux-gnu-check-vulkan" 2>/dev/null |
+        sed -n 's/.*"device-name":"\([^"]*\)".*/\1/p' |
+        grep -vE 'llvmpipe|lavapipe|SwiftShader' | sort -u
+}
+
+software() {
+    case "$1" in llvmpipe*|softpipe*|swrast*|"Software Rasterizer"*) return 0 ;; *) return 1 ;; esac
+}
+
+check_gl() {  # check_gl NAME RUN ARCH
+    host="$(renderer "$host_helpers" "$3")"
+    guest="$(in_runtime "$2" "$helpers/$3-linux-gnu-wflinfo --platform glx --api gl 2>&1 | grep 'renderer string'" |
+        sed -n 's/.*renderer string: //p' | tail -1)"
+    if [ -z "$host" ]; then
+        skip=$((skip + 1)); echo "SKIP $1: no $3 OpenGL on the host to compare with"
+    elif [ "$guest" != "$host" ]; then
+        report 1 "$1" "container has $guest, host has $host"
+    elif software "$host"; then
+        skip=$((skip + 1)); echo "SKIP $1: $guest on both sides, so this host has no GPU OpenGL for $3"
+    else
+        report 0 "$1" "$guest"
+    fi
+}
+
+check_vulkan() {  # check_vulkan NAME RUN ARCH
+    host="$(vulkan_gpus "$host_helpers" "$3")"
+    guest="$(in_runtime "$2" "$helpers/$3-linux-gnu-check-vulkan 2>&1" |
+        sed -n 's/.*"device-name":"\([^"]*\)".*/\1/p' | grep -vE 'llvmpipe|lavapipe|SwiftShader' | sort -u)"
+    if [ -z "$host" ]; then
+        skip=$((skip + 1)); echo "SKIP $1: no $3 Vulkan device on the host to compare with"
+        return
+    fi
+    if [ -z "$guest" ]; then
+        report 1 "$1" "container has no GPU, host has $(echo "$host" | tr '\n' ' ')"
+        return
+    fi
+    missing="$(echo "$host" | grep -vxF "$guest" | tr '\n' ' ')"
+    if [ -n "$missing" ]; then
+        report 1 "$1" "container is missing $missing"
+    else
+        report 0 "$1" "$(echo "$guest" | tr '\n' ' ')"
+    fi
+}
+
+# sniper is what Proton runs in and scout-on-soldier is what a native game runs
+# in, and they capture the graphics stack separately.
 for arch in x86_64 i386; do
-    out="$(in_runtime "$sniper" "$helpers/$arch-linux-gnu-wflinfo --platform glx --api gl 2>&1 | grep 'renderer string'")"
-    case "$out" in *renderer*) report 0 "gl-$arch" "$out" ;; *) report 1 "gl-$arch" "$out" ;; esac
+    check_gl "gl-$arch" "$sniper" "$arch"
+    check_gl "gl-scout-$arch" "$scout" "$arch"
+    check_vulkan "vulkan-$arch" "$sniper" "$arch"
 done
-out="$(in_runtime "$sniper" "$helpers/x86_64-linux-gnu-check-vulkan 2>&1 | grep -c '\"can-draw\":true'")"
-drawable=0; [ "${out:-0}" -ge 1 ] 2>/dev/null || drawable=1
-report "$drawable" vulkan "$out drawable device(s)"
-out="$(in_runtime "$sniper" "$helpers/i386-linux-gnu-check-vulkan 2>&1 | grep -c '\"can-draw\":true'")"
-drawable=0; [ "${out:-0}" -ge 1 ] 2>/dev/null || drawable=1
-report "$drawable" vulkan-i386 "$out drawable device(s)"
 # shellcheck disable=SC2016  # expanded by the shell inside the container
 out="$(in_runtime "$sniper" 'xterm -e /bin/true; echo rc=$?')"
 case "$out" in *rc=0*) report 0 x11 "xterm ran" ;; *) report 1 x11 "$out" ;; esac
