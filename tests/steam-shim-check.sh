@@ -1,6 +1,6 @@
 #!/bin/bash
 # Exercises the bwrap stand-in through the Steam Linux Runtime tools the way
-# Steam does: soldier, sniper and scout-on-soldier containers, OpenGL and
+# Steam does: soldier, sniper, and scout-on-soldier containers, OpenGL and
 # Vulkan for both architectures, an X11 client, a native GL benchmark, and a
 # Windows GL program through GE-Proton. Optionally the Steam client itself.
 #

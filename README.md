@@ -1,11 +1,11 @@
 # proot-bwrap
 
-Steam, Proton and Wine inside a container that has no user namespaces.
+Steam, Proton, and Wine inside a container that has no user namespaces.
 
 Steam containerizes its browser helper and every game with
 [bubblewrap](https://github.com/containers/bubblewrap), which needs a user
 namespace or `CAP_SYS_ADMIN`. A container's default seccomp profile grants
-neither, so in Docker, Kubernetes or Apptainer the client refuses to start:
+neither, so in Docker, Kubernetes, or Apptainer the client refuses to start:
 
 ```
 Steam now requires user namespaces to be enabled.
@@ -54,13 +54,13 @@ falls back to this one.
 
 - **PRoot has to be a recent build.** Every released one leaves its own loader
   named in `AT_EXECFN`, and the multi-call coreutils of Ubuntu 25.10 and later
-  reads that to decide which tool it is, so `cp`, `ls` and `dirname` fail with
+  reads that to decide which tool it is, so `cp`, `ls`, and `dirname` fail with
   `coreutils: unknown program`. The installer builds one that answers with the
   program's own name; `proot-bwrap` prefers such a build wherever it sits, its
   own prefix first, and says which it picked under `PROOT_BWRAP_DEBUG=1`. An
   image with a proot-apps runner has that runner's proot earlier on `PATH`.
 - **The browser helper is the one thing PRoot cannot run.** Both runtimes, both architectures,
-  games and Proton run under either backend, but the client gives its browser
+  games, and Proton run under either backend, but the client gives its browser
   helper about ten seconds to start and under proot it never gets there. One
   proot process traces every thread of every process it runs, so the syscalls
   it has to translate are served one at a time however many threads make them:
@@ -92,7 +92,7 @@ falls back to this one.
 ## Testing
 
 `tests/steam-shim-check.sh` exercises the stand-in the way Steam does: the
-soldier, sniper and scout-on-soldier containers, OpenGL and Vulkan for both
+soldier, sniper, and scout-on-soldier containers, OpenGL and Vulkan for both
 architectures against what the host itself renders with, an X11 client, a
 native benchmark, a Windows OpenGL program through GE-Proton, and the client's
 sign-in window.

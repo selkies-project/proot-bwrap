@@ -9,7 +9,7 @@
 # Steam's launcher package comes from Valve's repository, which the package
 # itself registers, together with the 32-bit host libraries the 32-bit client
 # and games need and the libraries Steam's metapackages only recommend but
-# games reach for (Vulkan, EGL, video acceleration and XKB of both
+# games reach for (Vulkan, EGL, video acceleration, and XKB of both
 # architectures). fakechroot is installed for the hosts that deny ptrace, and
 # proot -- what runs a program fakechroot cannot be preloaded into -- is built
 # here, since the packaged one is from 2018 and one that leaves its own loader

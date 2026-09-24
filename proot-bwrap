@@ -8,15 +8,15 @@
 
 Steam runs its client helper and every game through pressure-vessel, which
 builds a bwrap(1) command line describing a container -- bind mounts, symlinks,
-generated files, environment edits and the command to run -- and executes it.
+generated files, environment edits, and the command to run -- and executes it.
 bwrap needs a user namespace or CAP_SYS_ADMIN, and a container's default
 seccomp profile grants neither, so pressure-vessel fails at that very last step.
 pressure-vessel consults ``$BWRAP`` when its bundled bwrap does not work; this
-program takes that place, accepts the same command line and runs the command
+program takes that place, accepts the same command line, and runs the command
 in an equivalent tree without namespaces.
 
 The bwrap description is materialized as a root directory under the runtime
-directory: ``--dir``, ``--symlink``, ``--tmpfs`` and the data file options
+directory: ``--dir``, ``--symlink``, ``--tmpfs``, and the data file options
 become real entries, and the bind mounts are handed to one of two executors.
 
 * proot, the default: every bind is a proot ``-b`` binding and the root
@@ -300,7 +300,7 @@ for start in range(0, len(vector) - 2 * width + 1, 2 * width):
 
 
 def proot_state(path):
-    """What this proot is good for here: "none", "traces" or "names".
+    """What this proot is good for here: "none", "traces", or "names".
 
     Tracing is the first question. The second is whose name a traced program
     finds in AT_EXECFN, since a proot that leaves its own loader there breaks
@@ -946,7 +946,7 @@ class Runner:
                 os.close(int(values[0]))
 
     def build(self):
-        """Materialize the tree and return the executor's argv, env and cwd."""
+        """Materialize the tree and return the executor's argv, env, and cwd."""
         root = Root(self.stage, self.backend == "fakechroot")
         root.apply(self.ops)
         self.repoint_wine_drive(root)
@@ -1032,7 +1032,7 @@ class Runner:
             debug(f"leaving {drive} alone: {error}")
 
     def run(self):
-        """Fork the executor, wait for it and mirror its exit like bwrap."""
+        """Fork the executor, wait for it, and mirror its exit like bwrap."""
         executable, argv, env, cwd = self.build()
         env["PWD"] = self.cwd or "/"
         debug("executing {}: {}".format(executable, " ".join(repr(a) for a in argv)))
