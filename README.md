@@ -1,5 +1,7 @@
 # proot-bwrap
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/selkies-project/proot-bwrap)
+
 Steam, Proton, and Wine inside a container that has no user namespaces.
 
 Steam containerizes its browser helper and every game with
