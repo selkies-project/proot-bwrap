@@ -90,7 +90,8 @@ falls back to this one.
 - **This is not a security boundary.** It confines paths, not privileges; the
   surrounding container is the boundary, as it already is for the browsers
   those images run with `--no-sandbox`.
-- `PROOT_BWRAP_DEBUG=1` prints the command that is actually run.
+- `PROOT_BWRAP_DEBUG=1` prints the command that is actually run, and the
+  isolation options a launch passed that have no effect here.
 
 ## Testing
 

@@ -59,8 +59,7 @@ import tempfile
 VERSION = "bubblewrap 0.9.0 (proot-bwrap)"
 PROGRAM = "proot-bwrap"
 
-# Options with no argument: namespace and capability requests have no
-# meaning without namespaces and are accepted for compatibility.
+# Options with no argument.
 FLAGS = {
     "--unshare-all", "--share-net", "--unshare-user", "--unshare-user-try",
     "--unshare-ipc", "--unshare-pid", "--unshare-net", "--unshare-uts",
@@ -84,6 +83,16 @@ TWO_ARGS = {
     "--bind-data", "--ro-bind-data", "--symlink", "--chmod",
 }
 THREE_ARGS = {"--overlay"}
+# Accepted for compatibility with no effect: each needs a namespace, a
+# capability set, a seccomp filter, or a security label, and nothing here has one.
+INERT = {
+    "--unshare-all", "--unshare-user", "--unshare-user-try", "--unshare-ipc",
+    "--unshare-pid", "--unshare-net", "--unshare-uts", "--unshare-cgroup",
+    "--unshare-cgroup-try", "--disable-userns", "--assert-userns-disabled",
+    "--as-pid-1", "--userns", "--userns2", "--pidns", "--uid", "--gid",
+    "--hostname", "--remount-ro", "--cap-add", "--cap-drop", "--seccomp",
+    "--add-seccomp-fd", "--exec-label", "--file-label",
+}
 BINDS = {"--bind", "--bind-try", "--dev-bind", "--dev-bind-try", "--ro-bind",
          "--ro-bind-try", "--bind-fd", "--ro-bind-fd"}
 DATA_FILES = {"--file", "--bind-data", "--ro-bind-data"}
@@ -1128,6 +1137,9 @@ def main(argv):
     collect_garbage(base)
     stage = stage_directory(base, ops)
     debug(f"backend {backend}, tree {stage}")
+    inert = sorted({option for option, _, _ in ops if option in INERT})
+    if inert:
+        debug(f"no effect without namespaces: {' '.join(inert)}")
     try:
         runner = Runner(ops, command, backend, detail, stage)
         status = runner.run()
