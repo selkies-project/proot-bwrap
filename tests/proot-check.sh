@@ -22,18 +22,21 @@ while [ $# -gt 0 ]; do
     esac
 done
 here="$(dirname "$(dirname "$(readlink -f "$0")")")"
+proot_tag="$(sed -n 's/^proot_tag="\(.*\)"$/\1/p' "$here/install.sh")"
+proot_sha256="$(sed -n 's/^proot_sha256="\(.*\)"$/\1/p' "$here/install.sh")"
 fail=0
 
 if [ -z "$proot" ]; then
-    for tool in gcc make patch curl tar; do
+    for tool in gcc make patch curl tar sha256sum; do
         command -v "$tool" > /dev/null || { echo "missing $tool" >&2; exit 2; }
     done
     rm -rf "$build"
     mkdir -p "$build"
-    curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 \
-        "https://github.com/termux/proot/archive/refs/heads/master.tar.gz" |
-        tar -xzf - -C "$build" || exit 2
-    cd "$build/proot-master" || exit 2
+    curl -o "$build/proot.tar.gz" -fsSL --retry 5 --retry-all-errors --retry-delay 3 \
+        "https://github.com/termux/proot/archive/refs/tags/${proot_tag}.tar.gz" || exit 2
+    echo "${proot_sha256}  $build/proot.tar.gz" | sha256sum -c - || exit 2
+    tar -xzf "$build/proot.tar.gz" -C "$build" || exit 2
+    cd "$build/proot-${proot_tag#v}" || exit 2
     for file in "$here"/patches/*.patch; do
         [ -e "$file" ] || continue
         if patch -p1 -R --dry-run --silent < "$file" > /dev/null 2>&1; then
@@ -48,7 +51,7 @@ if [ -z "$proot" ]; then
     make -C src -j"$(nproc)" proot GIT=false > "$build/make.log" 2>&1 ||
         { echo "FAIL build: see $build/make.log"; tail -5 "$build/make.log"; exit 1; }
     echo "PASS build: $(stat -c %s src/proot) bytes"
-    proot="$build/proot-master/src/proot"
+    proot="$build/proot-${proot_tag#v}/src/proot"
 fi
 
 # Reads AT_EXECFN by one route only, so each is reported on its own.

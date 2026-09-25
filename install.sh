@@ -30,6 +30,10 @@ set -eu
 prefix="${PREFIX:-/usr/local}"
 ref="${PROOT_BWRAP_REF:-main}"
 here="$(dirname "$(readlink -f "$0")")"
+# The PRoot release built below and its archive's digest: an archive that does
+# not match fails the install instead of being built.
+proot_tag="v5.1.107.95"
+proot_sha256="f76716a9531c25be6f0bf7eb21003f0ebec3f832085a7fc233c3f475e75e4bf5"
 work="$(mktemp -d)"
 trap 'rm -rf "${work}"' EXIT
 export DEBIAN_FRONTEND=noninteractive
@@ -81,9 +85,11 @@ done
 # shellcheck disable=SC2086  # the package list is meant to split
 apt_install libtalloc2 ${tools}
 
-curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 --retry-connrefused --retry-max-time 180 \
-    "https://github.com/termux/proot/archive/refs/heads/master.tar.gz" | tar -xzf - -C "${work}"
-srcdir="${work}/proot-master"
+curl -o "${work}/proot.tar.gz" -fsSL --retry 5 --retry-all-errors --retry-delay 3 --retry-connrefused --retry-max-time 180 \
+    "https://github.com/termux/proot/archive/refs/tags/${proot_tag}.tar.gz"
+echo "${proot_sha256}  ${work}/proot.tar.gz" | sha256sum -c -
+tar -xzf "${work}/proot.tar.gz" -C "${work}"
+srcdir="${work}/proot-${proot_tag#v}"
 
 for name in ${patches}; do
     if [ -f "${here}/patches/${name}.patch" ]; then
