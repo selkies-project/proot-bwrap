@@ -30,6 +30,8 @@ set -eu
 prefix="${PREFIX:-/usr/local}"
 ref="${PROOT_BWRAP_REF:-main}"
 here="$(dirname "$(readlink -f "$0")")"
+work="$(mktemp -d)"
+trap 'rm -rf "${work}"' EXIT
 export DEBIAN_FRONTEND=noninteractive
 
 apt_install() {
@@ -42,11 +44,10 @@ if ! dpkg --print-foreign-architectures | grep -qx i386; then
     dpkg --add-architecture i386
 fi
 
-curl -o /tmp/steam-launcher.deb -fsSL --retry 5 --retry-all-errors --retry-delay 3 --retry-connrefused --retry-max-time 180 \
+curl -o "${work}/steam-launcher.deb" -fsSL --retry 5 --retry-all-errors --retry-delay 3 --retry-connrefused --retry-max-time 180 \
     "https://repo.steampowered.com/steam/archive/stable/steam_latest.deb"
 apt-get update
-apt_install /tmp/steam-launcher.deb
-rm -f /tmp/steam-launcher.deb
+apt_install "${work}/steam-launcher.deb"
 apt-get update
 apt_install \
     steam-libs-amd64 \
@@ -81,21 +82,20 @@ done
 apt_install libtalloc2 ${tools}
 
 curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 --retry-connrefused --retry-max-time 180 \
-    "https://github.com/termux/proot/archive/refs/heads/master.tar.gz" | tar -xzf - -C /tmp
-srcdir=/tmp/proot-master
+    "https://github.com/termux/proot/archive/refs/heads/master.tar.gz" | tar -xzf - -C "${work}"
+srcdir="${work}/proot-master"
 
 for name in ${patches}; do
     if [ -f "${here}/patches/${name}.patch" ]; then
-        cp "${here}/patches/${name}.patch" "/tmp/${name}.patch"
+        cp "${here}/patches/${name}.patch" "${work}/${name}.patch"
     else
-        curl -o "/tmp/${name}.patch" -fsSL --retry 5 --retry-delay 3 --retry-connrefused --retry-max-time 180 \
+        curl -o "${work}/${name}.patch" -fsSL --retry 5 --retry-delay 3 --retry-connrefused --retry-max-time 180 \
             "https://raw.githubusercontent.com/selkies-project/proot-bwrap/${ref}/patches/${name}.patch"
     fi
     ( cd "${srcdir}" &&
-        if ! patch -p1 -R --dry-run --silent < "/tmp/${name}.patch" > /dev/null 2>&1; then
-            patch -p1 --silent < "/tmp/${name}.patch"
+        if ! patch -p1 -R --dry-run --silent < "${work}/${name}.patch" > /dev/null 2>&1; then
+            patch -p1 --silent < "${work}/${name}.patch"
         fi )
-    rm -f "/tmp/${name}.patch"
 done
 
 # Best-effort: where proot cannot be built, proot-bwrap runs every container
