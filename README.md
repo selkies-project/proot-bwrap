@@ -58,7 +58,7 @@ falls back to this one.
   named in `AT_EXECFN`, and the multi-call coreutils of Ubuntu 25.10 and later
   reads that to decide which tool it is, so `cp`, `ls`, and `dirname` fail with
   `coreutils: unknown program`. The installer builds one that answers with the
-  program's own name, from a pinned PRoot release whose archive it checks
+  program's own name, from a pinned PRoot revision whose archive it checks
   against a recorded SHA-256; `proot-bwrap` prefers such a build wherever it sits, its
   own prefix first, and says which it picked under `PROOT_BWRAP_DEBUG=1`. An
   image with a proot-apps runner has that runner's proot earlier on `PATH`.

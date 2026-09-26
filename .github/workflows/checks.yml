@@ -68,7 +68,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
-              gcc libc6-dev make patch libtalloc-dev
+              gcc libc6-dev make patch libtalloc-dev pkgconf
           tests/proot-check.sh
 
   windows-probe:

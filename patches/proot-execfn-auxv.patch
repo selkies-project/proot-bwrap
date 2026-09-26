@@ -1,0 +1,385 @@
+auxv: report the program, not the loader, as AT_EXECFN
+
+The kernel records the loader's temp file as AT_EXECFN and hands that
+record out unchanged through prctl(PR_GET_AUXV) and /proc/self/auxv,
+which is where the multi-call coreutils of Ubuntu 25.10 and later look
+up which tool they are. Point AT_EXECFN at argv[0] in both, as the
+loader already does on the stack: fix up the buffer PR_GET_AUXV fills,
+and answer the file with a copy.
+
+Offered upstream as proot-me/proot#446; drop this file once it lands.
+diff --git a/src/compat.h b/src/compat.h
+index 5139af0..bb65c1f 100644
+--- a/src/compat.h
++++ b/src/compat.h
+@@ -204,6 +204,9 @@
+ #ifndef TALLOC_FREE
+ #define TALLOC_FREE(ctx) do { talloc_free(ctx); ctx = NULL; } while(0)
+ #endif
++#ifndef PR_GET_AUXV
++#define PR_GET_AUXV		0x41555856
++#endif
+ #ifndef PR_SET_NAME
+ #define PR_SET_NAME		15
+ #endif
+diff --git a/src/execve/auxv.c b/src/execve/auxv.c
+index 4618d49..b595d5f 100644
+--- a/src/execve/auxv.c
++++ b/src/execve/auxv.c
+@@ -27,6 +27,7 @@
+ #include <sys/types.h>		/* open(2), */
+ #include <sys/stat.h>		/* open(2), */
+ #include <fcntl.h>		/* open(2), */
++#include <string.h>		/* memcpy(3), */
+ 
+ #include "execve/auxv.h"
+ #include "syscall/sysnum.h"
+@@ -185,3 +186,63 @@ int push_elf_aux_vectors(const Tracee *tracee, ElfAuxVector *vectors,
+ 
+     return 0;
+ }
++
++/**
++ * Return the word of @tracee's size stored at @address.
++ */
++static word_t load_word(const Tracee *tracee, const uint8_t *address)
++{
++    uint32_t word32;
++    uint64_t word64;
++
++    if (sizeof_word(tracee) == sizeof(word32)) {
++	memcpy(&word32, address, sizeof(word32));
++	return word32;
++    }
++
++    memcpy(&word64, address, sizeof(word64));
++    return word64;
++}
++
++/**
++ * Store @value as a word of @tracee's size at @address.
++ */
++static void store_word(const Tracee *tracee, uint8_t *address,
++		       word_t value)
++{
++    uint32_t word32 = value;
++    uint64_t word64 = value;
++
++    if (sizeof_word(tracee) == sizeof(word32))
++	memcpy(address, &word32, sizeof(word32));
++    else
++	memcpy(address, &word64, sizeof(word64));
++}
++
++/**
++ * Point AT_EXECFN to @tracee->execfn_addr in the first @size bytes of
++ * the auxiliary vector at @vectors, laid out as the kernel hands it
++ * to @tracee through PR_GET_AUXV or /proc/self/auxv.  This function
++ * returns false if these bytes hold no AT_EXECFN entry.
++ */
++bool fix_up_execfn(const Tracee *tracee, void *vectors, size_t size)
++{
++    const size_t entry_size = 2 * sizeof_word(tracee);
++    uint8_t *entry;
++
++    for (entry = vectors; entry + entry_size <= (uint8_t *) vectors + size;
++	 entry += entry_size) {
++	word_t type = load_word(tracee, entry);
++
++	if (type == AT_NULL)
++	    break;
++
++	if (type == AT_EXECFN) {
++	    store_word(tracee, entry + sizeof_word(tracee),
++		       tracee->execfn_addr);
++	    return true;
++	}
++    }
++
++    return false;
++}
+diff --git a/src/execve/auxv.h b/src/execve/auxv.h
+index c2fd1ad..3ce44f0 100644
+--- a/src/execve/auxv.h
++++ b/src/execve/auxv.h
+@@ -38,5 +38,7 @@ extern int add_elf_aux_vector(ElfAuxVector ** vectors, word_t type,
+ 			      word_t value);
+ extern int push_elf_aux_vectors(const Tracee * tracee,
+ 				ElfAuxVector * vectors, word_t address);
++extern bool fix_up_execfn(const Tracee * tracee, void *vectors,
++			  size_t size);
+ 
+ #endif				/* AUXV */
+diff --git a/src/execve/exit.c b/src/execve/exit.c
+index fb52c18..75cf82c 100644
+--- a/src/execve/exit.c
++++ b/src/execve/exit.c
+@@ -210,6 +210,14 @@ static int transfer_load_script(Tracee *tracee)
+ 	page_mask = ~(page_size - 1);
+     }
+ 
++    /* The loader points AT_EXECFN to argv[0] on the stack (see
++     * loader/loader.c): remember where it is to answer PR_GET_AUXV
++     * and /proc/self/auxv the same way.  */
++    tracee->execfn_addr =
++	peek_word(tracee, stack_pointer + sizeof_word(tracee));
++    if (errno != 0)
++	tracee->execfn_addr = 0;
++
+     needs_executable_stack = (tracee->load_info->needs_executable_stack
+ 			      || (tracee->load_info->interp != NULL
+ 				  && tracee->load_info->interp->
+@@ -492,6 +500,10 @@ void translate_execve_exit(Tracee *tracee)
+ 	bzero(tracee->heap, sizeof(Heap));
+     }
+ 
++    /* The copy of the previous program's auxiliary vector, if
++     * any, is obsolete.  */
++    TALLOC_FREE(tracee->auxv_path);
++
+     /* Transfer the load script to the loader.  */
+     status = transfer_load_script(tracee);
+     if (status < 0)
+diff --git a/src/syscall/enter.c b/src/syscall/enter.c
+index fbb141a..e571caa 100644
+--- a/src/syscall/enter.c
++++ b/src/syscall/enter.c
+@@ -26,7 +26,9 @@
+ #include <linux/net.h>		/* SYS_*, */
+ #include <fcntl.h>		/* AT_FDCWD, */
+ #include <limits.h>		/* PATH_MAX, */
++#include <stdio.h>		/* snprintf(3), */
+ #include <string.h>		/* strcpy */
++#include <unistd.h>		/* read(2), write(2), close(2), */
+ #include <sys/prctl.h>		/* PR_SET_DUMPABLE */
+ #include "syscall/syscall.h"
+ #include "syscall/sysnum.h"
+@@ -36,12 +38,14 @@
+ #include "syscall/heap.h"
+ #include "extension/extension.h"
+ #include "execve/execve.h"
++#include "execve/auxv.h"
+ #include "tracee/tracee.h"
+ #include "tracee/reg.h"
+ #include "tracee/mem.h"
+ #include "tracee/abi.h"
+ #include "path/path.h"
+ #include "path/canon.h"
++#include "path/temp.h"
+ #include "arch.h"
+ 
+ /**
+@@ -86,6 +90,72 @@ static int translate_sysarg(Tracee *tracee, Reg reg, Type type)
+     return translate_path2(tracee, AT_FDCWD, old_path, reg, type);
+ }
+ 
++/**
++ * Make the @reg argument of the current syscall point to a copy of
++ * @tracee's auxiliary vector with AT_EXECFN fixed up, if @user_path
++ * names the tracee's own auxv file -- as "/proc/self/auxv" or
++ * "/proc/<pid>/auxv", the spellings QEMU's user-mode emulation answers
++ * too -- and @flags open it for reading only.  The kernel shows there
++ * the vector it saved for the loader, whose AT_EXECFN names the loader
++ * instead of the program.
++ */
++static void redirect_own_auxv(Tracee *tracee,
++			      const char user_path[PATH_MAX], int flags,
++			      Reg reg)
++{
++    char host_path[PATH_MAX];
++    char proc_path[64];
++    uint8_t vectors[4096];
++    ssize_t size;
++    ssize_t status;
++    int fd;
++
++    if (tracee->execfn_addr == 0 || (flags & O_ACCMODE) != O_RDONLY
++	|| strncmp(user_path, "/proc/", strlen("/proc/")) != 0)
++	return;
++
++    (void) snprintf(proc_path, sizeof(proc_path), "/proc/%d/auxv",
++		    tracee->pid);
++    if (strcmp(user_path, "/proc/self/auxv") != 0
++	&& strcmp(user_path, proc_path) != 0)
++	return;
++
++    /* A binding over this file, such as the one bind_proc_pid_auxv()
++     * makes for a ptraced tracee, is left alone.  */
++    if (get_sysarg_path(tracee, host_path, reg) < 0
++	|| strcmp(host_path, proc_path) != 0)
++	return;
++
++    if (tracee->auxv_path == NULL) {
++	fd = open(proc_path, O_RDONLY);
++	if (fd < 0)
++	    return;
++	size = read(fd, vectors, sizeof(vectors));
++	(void) close(fd);
++
++	/* A vector filling the buffer might have been cut short, and
++	 * a truncated copy would be worse than the kernel's own.  */
++	if (size <= 0 || (size_t) size == sizeof(vectors)
++	    || !fix_up_execfn(tracee, vectors, size))
++	    return;
++
++	tracee->auxv_path = (char *) create_temp_file(tracee, "auxv");
++	if (tracee->auxv_path == NULL)
++	    return;
++
++	fd = open(tracee->auxv_path, O_WRONLY);
++	status = (fd < 0 ? -1 : write(fd, vectors, size));
++	if (fd >= 0)
++	    (void) close(fd);
++	if (status != size) {
++	    TALLOC_FREE(tracee->auxv_path);
++	    return;
++	}
++    }
++
++    (void) set_sysarg_path(tracee, tracee->auxv_path, reg);
++}
++
+ /**
+  * Translate the input arguments of the current @tracee's syscall in the
+  * @tracee->pid process area. This function sets @tracee->status to
+@@ -387,11 +457,19 @@ int translate_syscall_enter(Tracee *tracee)
+     case PR_open:
+ 	flags = peek_reg(tracee, CURRENT, SYSARG_2);
+ 
++	status = get_sysarg_path(tracee, path, SYSARG_1);
++	if (status < 0)
++	    break;
++
+ 	if (((flags & O_NOFOLLOW) != 0)
+ 	    || ((flags & O_EXCL) != 0 && (flags & O_CREAT) != 0))
+-	    status = translate_sysarg(tracee, SYSARG_1, SYMLINK);
++	    status =
++		translate_path2(tracee, AT_FDCWD, path, SYSARG_1, SYMLINK);
+ 	else
+-	    status = translate_sysarg(tracee, SYSARG_1, REGULAR);
++	    status =
++		translate_path2(tracee, AT_FDCWD, path, SYSARG_1, REGULAR);
++	if (status >= 0)
++	    redirect_own_auxv(tracee, path, flags, SYSARG_1);
+ 	break;
+ 
+     case PR_fchownat:
+@@ -537,6 +615,8 @@ int translate_syscall_enter(Tracee *tracee)
+ 	else
+ 	    status =
+ 		translate_path2(tracee, dirfd, path, SYSARG_2, REGULAR);
++	if (status >= 0)
++	    redirect_own_auxv(tracee, path, flags, SYSARG_2);
+ 	break;
+ 
+     case PR_readlinkat:
+@@ -604,6 +684,14 @@ int translate_syscall_enter(Tracee *tracee)
+ 	    set_sysnum(tracee, PR_void);
+ 	    status = 0;
+ 	}
++
++	/* The vector PR_GET_AUXV copies out is fixed up at the exit
++	 * stage, which has to be hit under seccomp as well.  */
++	if (peek_reg(tracee, CURRENT, SYSARG_1) == PR_GET_AUXV
++	    && tracee->execfn_addr != 0) {
++	    tracee->restart_how = PTRACE_SYSCALL;
++	    tracee->sysexit_pending = true;
++	}
+ 	break;
+     }
+ 
+diff --git a/src/syscall/exit.c b/src/syscall/exit.c
+index ca22fba..3858c68 100644
+--- a/src/syscall/exit.c
++++ b/src/syscall/exit.c
+@@ -21,6 +21,7 @@
+  */
+ 
+ #include <errno.h>		/* errno(3), E* */
++#include <sys/param.h>		/* MIN(), */
+ #include <sys/utsname.h>	/* struct utsname, */
+ #include <linux/net.h>		/* SYS_*, */
+ #include <string.h>		/* strlen(3), */
+@@ -32,6 +33,7 @@
+ #include "syscall/heap.h"
+ #include "syscall/rlimit.h"
+ #include "execve/execve.h"
++#include "execve/auxv.h"
+ #include "tracee/tracee.h"
+ #include "tracee/reg.h"
+ #include "tracee/mem.h"
+@@ -443,6 +445,33 @@ void translate_syscall_exit(Tracee *tracee)
+ 	translate_execve_exit(tracee);
+ 	goto end;
+ 
++    case PR_prctl:{
++	    uint8_t vectors[4096];
++	    word_t address;
++	    size_t size;
++
++	    /* PR_GET_AUXV copies out the vector the kernel saved
++	     * for the loader: make its AT_EXECFN name the program,
++	     * as the loader did on the stack.  */
++	    if (peek_reg(tracee, ORIGINAL, SYSARG_1) != PR_GET_AUXV
++		|| (int) syscall_result < 0 || tracee->execfn_addr == 0)
++		goto end;
++
++	    /* The result is the size of the whole vector, which is
++	     * copied out only as far as the buffer goes.  */
++	    address = peek_reg(tracee, ORIGINAL, SYSARG_2);
++	    size =
++		MIN(syscall_result, peek_reg(tracee, ORIGINAL, SYSARG_3));
++	    size = MIN(size, sizeof(vectors));
++
++	    status = read_data(tracee, vectors, address, size);
++	    if (status < 0 || !fix_up_execfn(tracee, vectors, size))
++		goto end;
++
++	    (void) write_data(tracee, address, vectors, size);
++	    goto end;
++	}
++
+     case PR_ptrace:
+ 	status = translate_ptrace_exit(tracee);
+ 	break;
+diff --git a/src/tracee/tracee.c b/src/tracee/tracee.c
+index bd9fbb5..d2d9bed 100644
+--- a/src/tracee/tracee.c
++++ b/src/tracee/tracee.c
+@@ -550,6 +550,7 @@ int new_child(Tracee *parent, word_t clone_flags)
+     /* The path to the executable is unshared only once the child
+      * process does a call to execve(2).  */
+     child->exe = talloc_reference(child, parent->exe);
++    child->execfn_addr = parent->execfn_addr;
+ 
+     child->qemu = talloc_reference(child, parent->qemu);
+     child->glue = talloc_reference(child, parent->glue);
+diff --git a/src/tracee/tracee.h b/src/tracee/tracee.h
+index 8b64665..12d56ae 100644
+--- a/src/tracee/tracee.h
++++ b/src/tracee/tracee.h
+@@ -204,6 +204,11 @@ typedef struct tracee {
+      * execve sysexit.  */
+     struct load_info *load_info;
+ 
++    /* Copy of this tracee's auxiliary vector with AT_EXECFN fixed
++     * up, handed out in place of its own /proc/self/auxv.  NULL
++     * until the tracee opens that file.  */
++    char *auxv_path;
++
+     /* Disable mixed-execution (native host) check */
+     bool mixed_mode;
+ 
+@@ -240,6 +245,12 @@ typedef struct tracee {
+     char *exe;
+     char *new_exe;
+ 
++    /* Address of argv[0] in the initial stack.  The loader points
++     * AT_EXECFN there on the stack, but the auxiliary vector the
++     * kernel keeps for PR_GET_AUXV and /proc/self/auxv still points
++     * it to the loader.  0 until the loader is used.  */
++    word_t execfn_addr;
++
+ 
+ 	/**********************************************************************
+ 	 * Shared or private resources, depending on the (re-)configuration   *

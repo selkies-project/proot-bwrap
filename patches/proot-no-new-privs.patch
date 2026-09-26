@@ -1,0 +1,179 @@
+prctl: report the program's no_new_privs flag, not PRoot's
+
+PRoot sets no_new_privs itself to install its seccomp filter, so
+prctl(PR_GET_NO_NEW_PRIVS) reported 1 to every program. Answer it with
+the flag the program inherited from PRoot's caller or set itself.
+
+Offered upstream as proot-me/proot#448; drop this file once it lands.
+It is made against proot-execfn-auxv.patch, which touches the same code.
+diff --git a/src/compat.h b/src/compat.h
+index bb65c1f..af0a9b0 100644
+--- a/src/compat.h
++++ b/src/compat.h
+@@ -213,6 +213,9 @@
+ #ifndef PR_SET_NO_NEW_PRIVS
+ #define PR_SET_NO_NEW_PRIVS	38
+ #endif
++#ifndef PR_GET_NO_NEW_PRIVS
++#define PR_GET_NO_NEW_PRIVS	39
++#endif
+ #ifndef PR_SET_SECCOMP
+ #define PR_SET_SECCOMP		22
+ #endif
+diff --git a/src/execve/exit.c b/src/execve/exit.c
+index 75cf82c..064c63a 100644
+--- a/src/execve/exit.c
++++ b/src/execve/exit.c
+@@ -481,6 +481,10 @@ void translate_execve_exit(Tracee *tracee)
+     if ((int) syscall_result < 0)
+ 	return;
+ 
++    /* PR_SET_NO_NEW_PRIVS belongs to the program from now on, see
++     * translate_syscall_enter().  */
++    tracee->seen_execve = true;
++
+     /* Execve happened; commit the new "/proc/self/exe".  */
+     if (tracee->new_exe != NULL) {
+ 	(void) talloc_unlink(tracee, tracee->exe);
+diff --git a/src/syscall/enter.c b/src/syscall/enter.c
+index e571caa..dc8f3e8 100644
+--- a/src/syscall/enter.c
++++ b/src/syscall/enter.c
+@@ -677,22 +677,48 @@ int translate_syscall_enter(Tracee *tracee)
+ 	    translate_path2(tracee, newdirfd, newpath, SYSARG_3, SYMLINK);
+ 	break;
+ 
+-    case PR_prctl:
+-	/* Prevent tracees from setting dumpable flag.
+-	 * (Otherwise it could break tracee memory access)  */
+-	if (peek_reg(tracee, CURRENT, SYSARG_1) == PR_SET_DUMPABLE) {
+-	    set_sysnum(tracee, PR_void);
+-	    status = 0;
+-	}
++    case PR_prctl:{
++	    word_t option = peek_reg(tracee, CURRENT, SYSARG_1);
++	    word_t arg2 = peek_reg(tracee, CURRENT, SYSARG_2);
++	    bool no_more_args;
++
++	    no_more_args = (peek_reg(tracee, CURRENT, SYSARG_3) == 0
++			    && peek_reg(tracee, CURRENT, SYSARG_4) == 0
++			    && peek_reg(tracee, CURRENT, SYSARG_5) == 0);
++
++	    /* Prevent tracees from setting dumpable flag.
++	     * (Otherwise it could break tracee memory access)  */
++	    if (option == PR_SET_DUMPABLE) {
++		set_sysnum(tracee, PR_void);
++		status = 0;
++	    }
+ 
+-	/* The vector PR_GET_AUXV copies out is fixed up at the exit
+-	 * stage, which has to be hit under seccomp as well.  */
+-	if (peek_reg(tracee, CURRENT, SYSARG_1) == PR_GET_AUXV
+-	    && tracee->execfn_addr != 0) {
+-	    tracee->restart_how = PTRACE_SYSCALL;
+-	    tracee->sysexit_pending = true;
++	    /* PRoot sets no_new_privs itself, before the program starts,
++	     * to install its seccomp filter, so the kernel would answer
++	     * PR_GET_NO_NEW_PRIVS for PRoot: answer it at the exit stage
++	     * from the program's own flag instead.  Other arguments get
++	     * the kernel's EINVAL.  */
++	    if (option == PR_GET_NO_NEW_PRIVS && arg2 == 0 && no_more_args) {
++		set_sysnum(tracee, PR_void);
++		tracee->restart_how = PTRACE_SYSCALL;
++		tracee->sysexit_pending = true;
++		status = 0;
++	    }
++
++	    /* The kernel accepts only these arguments, and the flag
++	     * cannot be cleared once set.  */
++	    if (option == PR_SET_NO_NEW_PRIVS && arg2 == 1 && no_more_args
++		&& tracee->seen_execve)
++		tracee->no_new_privs = true;
++
++	    /* The vector PR_GET_AUXV copies out is fixed up at the exit
++	     * stage, which has to be hit under seccomp as well.  */
++	    if (option == PR_GET_AUXV && tracee->execfn_addr != 0) {
++		tracee->restart_how = PTRACE_SYSCALL;
++		tracee->sysexit_pending = true;
++	    }
++	    break;
+ 	}
+-	break;
+     }
+ 
+   end:
+diff --git a/src/syscall/exit.c b/src/syscall/exit.c
+index ecb0092..8d78ed1 100644
+--- a/src/syscall/exit.c
++++ b/src/syscall/exit.c
+@@ -465,6 +465,13 @@ void translate_syscall_exit(Tracee *tracee)
+ 	    word_t address;
+ 	    size_t size;
+ 
++	    /* See translate_syscall_enter().  */
++	    if (peek_reg(tracee, ORIGINAL, SYSARG_1) == PR_GET_NO_NEW_PRIVS
++		&& get_sysnum(tracee, MODIFIED) == PR_void) {
++		status = tracee->no_new_privs ? 1 : 0;
++		break;
++	    }
++
+ 	    /* PR_GET_AUXV copies out the vector the kernel saved
+ 	     * for the loader: make its AT_EXECFN name the program,
+ 	     * as the loader did on the stack.  */
+diff --git a/src/tracee/event.c b/src/tracee/event.c
+index 8925ec8..3b274bf 100644
+--- a/src/tracee/event.c
++++ b/src/tracee/event.c
+@@ -36,6 +36,7 @@
+ #include <talloc.h>		/* talloc_*, */
+ #include <inttypes.h>		/* PRI*, */
+ #include <linux/version.h>	/* KERNEL_VERSION, */
++#include <sys/prctl.h>		/* prctl(2), PR_*, */
+ 
+ #include "tracee/event.h"
+ #include "cli/note.h"
+@@ -65,6 +66,10 @@ int launch_process(Tracee *tracee, char *const argv[])
+      * translated until they are closed. */
+     list_open_fd(tracee);
+ 
++    /* The program would inherit the no_new_privs flag of PRoot's
++     * caller, whatever PRoot sets for itself.  */
++    tracee->no_new_privs = (prctl(PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0) == 1);
++
+     pid = fork();
+     switch (pid) {
+     case -1:
+diff --git a/src/tracee/tracee.c b/src/tracee/tracee.c
+index d2d9bed..77b5de8 100644
+--- a/src/tracee/tracee.c
++++ b/src/tracee/tracee.c
+@@ -439,6 +439,8 @@ int new_child(Tracee *parent, word_t clone_flags)
+     child->verbose = parent->verbose;
+     child->seccomp = parent->seccomp;
+     child->sysexit_pending = parent->sysexit_pending;
++    child->no_new_privs = parent->no_new_privs;
++    child->seen_execve = parent->seen_execve;
+     child->restart_how = parent->restart_how;
+ 
+     /* If CLONE_VM is set, the calling process and the child
+diff --git a/src/tracee/tracee.h b/src/tracee/tracee.h
+index 12d56ae..e9966c1 100644
+--- a/src/tracee/tracee.h
++++ b/src/tracee/tracee.h
+@@ -225,6 +225,16 @@ typedef struct tracee {
+     /* Ensure the sysexit stage is always hit under seccomp.  */
+     bool sysexit_pending;
+ 
++    /* The no_new_privs flag as this tracee sees it: inherited from
++     * PRoot's caller, or set by the program itself.  The kernel's
++     * flag doesn't tell, since PRoot sets it to install its seccomp
++     * filter.  */
++    bool no_new_privs;
++
++    /* Whether the first program has been executed: PRoot's own
++     * PR_SET_NO_NEW_PRIVS comes before.  */
++    bool seen_execve;
++
+ 
+ 	/**********************************************************************
+ 	 * Shared or private resources, depending on the CLONE_FS/VM flags.   *

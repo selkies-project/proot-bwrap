@@ -22,23 +22,25 @@ while [ $# -gt 0 ]; do
     esac
 done
 here="$(dirname "$(dirname "$(readlink -f "$0")")")"
-proot_tag="$(sed -n 's/^proot_tag="\(.*\)"$/\1/p' "$here/install.sh")"
+proot_commit="$(sed -n 's/^proot_commit="\(.*\)"$/\1/p' "$here/install.sh")"
 proot_sha256="$(sed -n 's/^proot_sha256="\(.*\)"$/\1/p' "$here/install.sh")"
+# The patches in install.sh's order, since one can build on another.
+patches="$(sed -n 's/^patches="\(.*\)"$/\1/p' "$here/install.sh")"
 fail=0
 
 if [ -z "$proot" ]; then
-    for tool in gcc make patch curl tar sha256sum; do
+    for tool in gcc make patch curl tar sha256sum pkg-config; do
         command -v "$tool" > /dev/null || { echo "missing $tool" >&2; exit 2; }
     done
     rm -rf "$build"
     mkdir -p "$build"
     curl -o "$build/proot.tar.gz" -fsSL --retry 5 --retry-all-errors --retry-delay 3 \
-        "https://github.com/termux/proot/archive/refs/tags/${proot_tag}.tar.gz" || exit 2
+        "https://github.com/proot-me/proot/archive/${proot_commit}.tar.gz" || exit 2
     echo "${proot_sha256}  $build/proot.tar.gz" | sha256sum -c - || exit 2
     tar -xzf "$build/proot.tar.gz" -C "$build" || exit 2
-    cd "$build/proot-${proot_tag#v}" || exit 2
-    for file in "$here"/patches/*.patch; do
-        [ -e "$file" ] || continue
+    cd "$build/proot-${proot_commit}" || exit 2
+    for name in $patches; do
+        file="$here/patches/$name.patch"
         if patch -p1 -R --dry-run --silent < "$file" > /dev/null 2>&1; then
             echo "SKIP $(basename "$file"): already upstream"
         elif patch -p1 --silent < "$file"; then
@@ -48,10 +50,10 @@ if [ -z "$proot" ]; then
             fail=$((fail + 1))
         fi
     done
-    make -C src -j"$(nproc)" proot GIT=false > "$build/make.log" 2>&1 ||
+    make -C src -j"$(nproc)" proot GIT=false WITHOUT_PYTHON=1 > "$build/make.log" 2>&1 ||
         { echo "FAIL build: see $build/make.log"; tail -5 "$build/make.log"; exit 1; }
     echo "PASS build: $(stat -c %s src/proot) bytes"
-    proot="$build/proot-${proot_tag#v}/src/proot"
+    proot="$build/proot-${proot_commit}/src/proot"
 fi
 
 # Reads AT_EXECFN by one route only, so each is reported on its own.

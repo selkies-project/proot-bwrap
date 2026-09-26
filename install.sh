@@ -12,8 +12,8 @@
 # games reach for (Vulkan, EGL, video acceleration, and XKB of both
 # architectures). fakechroot is installed for the hosts that deny ptrace, and
 # proot -- what runs a program fakechroot cannot be preloaded into -- is built
-# here, since the packaged one is from 2018 and one that leaves its own loader
-# named in AT_EXECFN breaks every applet of the multi-call coreutils recent
+# here, since the one Ubuntu packages leaves its own loader named in
+# AT_EXECFN, which breaks every applet of the multi-call coreutils recent
 # Ubuntu ships. steamdeps, the client's dependency check, would drive apt
 # through pkexec at every start; the system carries what it checks for, so it
 # is diverted to a stub that answers that everything is there. proot-bwrap is
@@ -30,10 +30,10 @@ set -eu
 prefix="${PREFIX:-/usr/local}"
 ref="${PROOT_BWRAP_REF:-main}"
 here="$(dirname "$(readlink -f "$0")")"
-# The PRoot release built below and its archive's digest: an archive that does
-# not match fails the install instead of being built.
-proot_tag="v5.1.107.95"
-proot_sha256="f76716a9531c25be6f0bf7eb21003f0ebec3f832085a7fc233c3f475e75e4bf5"
+# The PRoot revision built below and its archive's digest: an archive that
+# does not match fails the install instead of being built.
+proot_commit="2265984687bf354ff35a0b8b1887fc6f5b5518b7"
+proot_sha256="95df908eeedf6c02404a76f2c3ee28e1dfd570c3727a3d64ccc484b21682ac4f"
 work="$(mktemp -d)"
 trap 'rm -rf "${work}"' EXIT
 export DEBIAN_FRONTEND=noninteractive
@@ -76,9 +76,9 @@ apt_install \
 
 # The fixes proot still lacks are offered upstream; a patch that is already
 # there applies in reverse and is skipped.
-patches="proot-freestanding-loader proot-own-auxv"
+patches="proot-execfn-auxv proot-readlink-truncation proot-no-new-privs"
 tools=""
-for package in gcc libc6-dev make patch libtalloc-dev; do
+for package in gcc libc6-dev make patch libtalloc-dev pkgconf; do
     dpkg-query -s "${package}:$(dpkg --print-architecture)" > /dev/null 2>&1 ||
         tools="${tools} ${package}"
 done
@@ -86,10 +86,10 @@ done
 apt_install libtalloc2 ${tools}
 
 curl -o "${work}/proot.tar.gz" -fsSL --retry 5 --retry-all-errors --retry-delay 3 --retry-connrefused --retry-max-time 180 \
-    "https://github.com/termux/proot/archive/refs/tags/${proot_tag}.tar.gz"
+    "https://github.com/proot-me/proot/archive/${proot_commit}.tar.gz"
 echo "${proot_sha256}  ${work}/proot.tar.gz" | sha256sum -c -
 tar -xzf "${work}/proot.tar.gz" -C "${work}"
-srcdir="${work}/proot-${proot_tag#v}"
+srcdir="${work}/proot-${proot_commit}"
 
 for name in ${patches}; do
     if [ -f "${here}/patches/${name}.patch" ]; then
@@ -106,7 +106,7 @@ done
 
 # Best-effort: where proot cannot be built, proot-bwrap runs every container
 # under the fakechroot installed above rather than the install failing here.
-if make -C "${srcdir}/src" -j"$(nproc)" proot GIT=false; then
+if make -C "${srcdir}/src" -j"$(nproc)" proot GIT=false WITHOUT_PYTHON=1; then
     install -m 755 "${srcdir}/src/proot" "${prefix}/bin/proot"
 else
     echo "warning: proot did not build, so containers run under fakechroot" >&2
