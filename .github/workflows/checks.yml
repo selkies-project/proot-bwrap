@@ -24,8 +24,8 @@ jobs:
         # into has, so every version still receiving fixes is tested.
         python: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python }}
       - name: Byte-compile
@@ -45,8 +45,8 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
       - run: pip install ruff
@@ -63,7 +63,7 @@ jobs:
     name: proot
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Build the patched proot and ask it its own name
         run: |
           sudo apt-get update
@@ -75,7 +75,7 @@ jobs:
     name: Windows OpenGL probe
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Cross-compile
         run: |
           sudo apt-get update
@@ -83,7 +83,7 @@ jobs:
           x86_64-w64-mingw32-gcc -O2 -o tests/wgltri.exe tests/wgltri.c \
               -lopengl32 -lgdi32 -luser32 -mconsole
           file tests/wgltri.exe
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: wgltri
           path: tests/wgltri.exe
