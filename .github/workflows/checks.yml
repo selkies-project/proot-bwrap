@@ -64,11 +64,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Build the patched proot and ask it its own name
+      - name: Build proot and ask it its own name
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
-              gcc libc6-dev make patch libtalloc-dev pkgconf
+              gcc libc6-dev make libtalloc-dev pkgconf
           tests/proot-check.sh
 
   windows-probe:

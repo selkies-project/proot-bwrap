@@ -12,9 +12,9 @@
 # games reach for (Vulkan, EGL, video acceleration, and XKB of both
 # architectures). fakechroot is installed for the hosts that deny ptrace, and
 # proot -- what runs a program fakechroot cannot be preloaded into -- is built
-# here, since the one Ubuntu packages leaves its own loader named in
-# AT_EXECFN, which breaks every applet of the multi-call coreutils recent
-# Ubuntu ships. steamdeps, the client's dependency check, would drive apt
+# here from release 5.5.0, since the one Ubuntu packages, like every release
+# before it, leaves its own loader named in AT_EXECFN, which breaks every
+# applet of the multi-call coreutils recent Ubuntu ships. steamdeps, the client's dependency check, would drive apt
 # through pkexec at every start; the system carries what it checks for, so it
 # is diverted to a stub that answers that everything is there. proot-bwrap is
 # installed beside this script's copy, or downloaded from the repository when
@@ -30,10 +30,10 @@ set -eu
 prefix="${PREFIX:-/usr/local}"
 ref="${PROOT_BWRAP_REF:-main}"
 here="$(dirname "$(readlink -f "$0")")"
-# The PRoot revision built below and its archive's digest: an archive that
-# does not match fails the install instead of being built.
-proot_commit="2265984687bf354ff35a0b8b1887fc6f5b5518b7"
-proot_sha256="95df908eeedf6c02404a76f2c3ee28e1dfd570c3727a3d64ccc484b21682ac4f"
+# The PRoot revision built below, release 5.5.0, and its archive's digest: an
+# archive that does not match fails the install instead of being built.
+proot_commit="25dc6a3134891f98a79f57ce1c2c1b23ff15cad1"
+proot_sha256="6adb0d808dad47d66f503d6d5a699b455ac1a0a519b905378be4ffc0af92f40e"
 work="$(mktemp -d)"
 trap 'rm -rf "${work}"' EXIT
 export DEBIAN_FRONTEND=noninteractive
@@ -74,11 +74,8 @@ apt_install \
     libasound2-plugins:i386 \
     python3
 
-# The fixes proot still lacks are offered upstream; a patch that is already
-# there applies in reverse and is skipped.
-patches="proot-execfn-auxv proot-readlink-truncation proot-no-new-privs"
 tools=""
-for package in gcc libc6-dev make patch libtalloc-dev pkgconf; do
+for package in gcc libc6-dev make libtalloc-dev pkgconf; do
     dpkg-query -s "${package}:$(dpkg --print-architecture)" > /dev/null 2>&1 ||
         tools="${tools} ${package}"
 done
@@ -90,19 +87,6 @@ curl -o "${work}/proot.tar.gz" -fsSL --retry 5 --retry-all-errors --retry-delay 
 echo "${proot_sha256}  ${work}/proot.tar.gz" | sha256sum -c -
 tar -xzf "${work}/proot.tar.gz" -C "${work}"
 srcdir="${work}/proot-${proot_commit}"
-
-for name in ${patches}; do
-    if [ -f "${here}/patches/${name}.patch" ]; then
-        cp "${here}/patches/${name}.patch" "${work}/${name}.patch"
-    else
-        curl -o "${work}/${name}.patch" -fsSL --retry 5 --retry-delay 3 --retry-connrefused --retry-max-time 180 \
-            "https://raw.githubusercontent.com/selkies-project/proot-bwrap/${ref}/patches/${name}.patch"
-    fi
-    ( cd "${srcdir}" &&
-        if ! patch -p1 -R --dry-run --silent < "${work}/${name}.patch" > /dev/null 2>&1; then
-            patch -p1 --silent < "${work}/${name}.patch"
-        fi )
-done
 
 # Best-effort: where proot cannot be built, proot-bwrap runs every container
 # under the fakechroot installed above rather than the install failing here.

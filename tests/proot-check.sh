@@ -1,9 +1,8 @@
 #!/bin/bash
-# Builds proot from the source install.sh uses, with the patches this
-# repository still carries, and asks a program traced by it for its own name.
-# Every released proot answers with its own loader's temp file, which the
-# multi-call coreutils of Ubuntu 25.10 and later read to decide which tool
-# they are. Both routes to that name are checked: prctl(PR_GET_AUXV), which a
+# Builds proot from the source install.sh uses and asks a program traced by
+# it for its own name. Every proot release before 5.5.0 answers with its own
+# loader's temp file, which the multi-call coreutils of Ubuntu 25.10 and later
+# read to decide which tool they are. Both routes to that name are checked: prctl(PR_GET_AUXV), which a
 # kernel 6.4 or newer answers, and /proc/self/auxv, which is where an older
 # one is read instead.
 #
@@ -24,12 +23,10 @@ done
 here="$(dirname "$(dirname "$(readlink -f "$0")")")"
 proot_commit="$(sed -n 's/^proot_commit="\(.*\)"$/\1/p' "$here/install.sh")"
 proot_sha256="$(sed -n 's/^proot_sha256="\(.*\)"$/\1/p' "$here/install.sh")"
-# The patches in install.sh's order, since one can build on another.
-patches="$(sed -n 's/^patches="\(.*\)"$/\1/p' "$here/install.sh")"
 fail=0
 
 if [ -z "$proot" ]; then
-    for tool in gcc make patch curl tar sha256sum pkg-config; do
+    for tool in gcc make curl tar sha256sum pkg-config; do
         command -v "$tool" > /dev/null || { echo "missing $tool" >&2; exit 2; }
     done
     rm -rf "$build"
@@ -39,17 +36,6 @@ if [ -z "$proot" ]; then
     echo "${proot_sha256}  $build/proot.tar.gz" | sha256sum -c - || exit 2
     tar -xzf "$build/proot.tar.gz" -C "$build" || exit 2
     cd "$build/proot-${proot_commit}" || exit 2
-    for name in $patches; do
-        file="$here/patches/$name.patch"
-        if patch -p1 -R --dry-run --silent < "$file" > /dev/null 2>&1; then
-            echo "SKIP $(basename "$file"): already upstream"
-        elif patch -p1 --silent < "$file"; then
-            echo "PASS $(basename "$file"): applies"
-        else
-            echo "FAIL $(basename "$file"): does not apply"
-            fail=$((fail + 1))
-        fi
-    done
     make -C src -j"$(nproc)" proot GIT=false WITHOUT_PYTHON=1 > "$build/make.log" 2>&1 ||
         { echo "FAIL build: see $build/make.log"; tail -5 "$build/make.log"; exit 1; }
     echo "PASS build: $(stat -c %s src/proot) bytes"

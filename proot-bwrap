@@ -22,10 +22,11 @@ become real entries, and the bind mounts are handed to one of two executors.
 * proot, the default: every bind is a proot ``-b`` binding and the root
   directory is the guest root, which confines paths for every process rather
   than only those that go through libc. It needs ptrace, and it loads a
-  program through a loader of its own, whose temp file every released proot
-  leaves named in AT_EXECFN -- the multi-call coreutils of Ubuntu 25.10 and
-  later read that to decide which tool they are, so nothing that runs them
-  works under such a build. A proot is probed for that before it is used.
+  program through a loader of its own, whose temp file every proot release
+  before 5.5.0 leaves named in AT_EXECFN -- the multi-call coreutils of Ubuntu
+  25.10 and later read that to decide which tool they are, so nothing that
+  runs them works under such a build. A proot is probed for that before it is
+  used.
 * fakechroot, where no proot can do that: an LD_PRELOAD library prefixes every
   path a dynamically linked program opens with the root directory, and binds
   become symlinks in it. The dynamic loader and the kernel are not rewritten,
@@ -273,7 +274,8 @@ def proot_candidates():
 
     The build beside this program comes first: the installer puts one there
     that names the program in AT_EXECFN, and an image that also carries a
-    proot-apps runner has that runner's copy earlier on PATH, which does not.
+    proot-apps runner has that runner's copy earlier on PATH, which not every
+    release of it does.
     Every PATH entry is offered rather than the first, since the one that
     answers is worth more than the one that comes first.
     """
