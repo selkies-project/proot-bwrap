@@ -83,7 +83,7 @@ jobs:
           x86_64-w64-mingw32-gcc -O2 -o tests/wgltri.exe tests/wgltri.c \
               -lopengl32 -lgdi32 -luser32 -mconsole
           file tests/wgltri.exe
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: wgltri
           path: tests/wgltri.exe
