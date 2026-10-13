@@ -29,7 +29,13 @@ set -eu
 
 prefix="${PREFIX:-/usr/local}"
 ref="${PROOT_BWRAP_REF:-main}"
-here="$(dirname "$(readlink -f "$0")")"
+# Beside this script when it runs from its file. Piped to a shell, $0 names the
+# shell, which would resolve against the working directory: nothing is taken
+# from there.
+here=""
+if [ "$(basename "$0")" = install.sh ] && [ -f "$0" ]; then
+    here="$(dirname "$(readlink -f "$0")")"
+fi
 # The PRoot revision built below, release 5.5.0, and its archive's digest: an
 # archive that does not match fails the install instead of being built.
 proot_commit="25dc6a3134891f98a79f57ce1c2c1b23ff15cad1"
@@ -106,7 +112,7 @@ printf '#!/bin/sh\nexit 0\n' > /usr/bin/steamdeps
 chmod 755 /usr/bin/steamdeps
 
 mkdir -p "${prefix}/bin"
-if [ -f "${here}/proot-bwrap" ]; then
+if [ -n "${here}" ] && [ -f "${here}/proot-bwrap" ]; then
     install -m 755 "${here}/proot-bwrap" "${prefix}/bin/proot-bwrap"
 else
     curl -o "${prefix}/bin/proot-bwrap" -fsSL --retry 5 --retry-delay 3 --retry-connrefused --retry-max-time 180 \
